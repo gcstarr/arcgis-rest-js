@@ -502,7 +502,7 @@ describe("UserSession", () => {
           expect(e.name).toEqual(ErrorTypes.ArcGISAuthError);
           expect(e.code).toEqual("NOT_FEDERATED");
           expect(e.message).toEqual(
-            "NOT_FEDERATED: https://gisservices.city.gov/public/rest/services/trees/FeatureServer/0/query is not federated with https://www.arcgis.com/sharing/rest."
+            "NOT_FEDERATED: https://gisservices.city.gov/public/rest/services/trees/FeatureServer/0/query is not federated with any portal and is not explicitly trusted."
           );
           done();
         });

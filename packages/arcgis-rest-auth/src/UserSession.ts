@@ -1,6 +1,17 @@
 /* Copyright (c) 2017-2018 Environmental Systems Research Institute, Inc.
  * Apache-2.0 */
 
+/**
+ * /generateToken returns a token that cannot be refreshed.
+ *
+ * oauth2/token can return a token *and* a refreshToken.
+ * up until the refreshToken expires, you can use it (and a clientId)
+ * to fetch fresh credentials without a username and password.
+ *
+ * the catch is that this 'authorization_code' flow is only utilized
+ * by server based OAuth 2 Node.js applications that call /authorize first.
+ */
+
 import * as http from "http";
 import {
   request,
@@ -334,8 +345,12 @@ export class UserSession implements IAuthenticationManager {
     this.redirectUri = options.redirectUri;
     this.refreshTokenTTL = options.refreshTokenTTL || 1440;
     this.trustedServers = {};
+    // if a non-federated server was passed explicitly, we can also consider it trusted.
     if (options.server) {
-      this.trustedServers[options.server] = null;
+      this.trustedServers[options.server] = {
+        token: options.token,
+        expires: options.tokenExpires
+      };
     }
     this._pendingTokenRequests = {};
   }
@@ -724,7 +739,11 @@ export class UserSession implements IAuthenticationManager {
     const [root] = url.toLowerCase().split(/\/rest(\/admin)?\/services\//);
     const existingToken = this.trustedServers[root];
 
-    if (existingToken && existingToken.expires.getTime() > Date.now()) {
+    if (
+      existingToken &&
+      existingToken.expires &&
+      existingToken.expires.getTime() > Date.now()
+    ) {
       return Promise.resolve(existingToken.token);
     }
 
@@ -749,6 +768,9 @@ export class UserSession implements IAuthenticationManager {
               "NOT_FEDERATED"
             );
           } else {
+            /**
+             * if the server is federated, use the relevant token endpoint.
+             */
             return request(
               `${response.owningSystemUrl}/sharing/rest/info`,
               requestOptions
@@ -760,14 +782,12 @@ export class UserSession implements IAuthenticationManager {
         ) {
           /**
            * if its a stand-alone instance of ArcGIS Server that doesn't advertise
-           * federation at all and the root url is recognized, use its built in token endpoint.
+           * federation, but the root server url is recognized, use its built in token endpoint.
            */
-          return new Promise((resolve, reject) => {
-            resolve({ authInfo: response.authInfo });
-          });
+          return Promise.resolve({ authInfo: response.authInfo });
         } else {
           throw new ArcGISAuthError(
-            `${url} is not federated with ${this.portal}.`,
+            `${url} is not federated with any portal and is not explicitly trusted.`,
             "NOT_FEDERATED"
           );
         }
@@ -781,7 +801,8 @@ export class UserSession implements IAuthenticationManager {
             params: {
               token: this.token,
               serverUrl: url,
-              expiration: this.tokenDuration
+              expiration: this.tokenDuration,
+              client: "referer"
             }
           });
           // generate an entirely fresh token if necessary
@@ -887,7 +908,7 @@ export class UserSession implements IAuthenticationManager {
   }
 
   /**
-   * Exchanges an expired `refreshToken` for a new one also updates `token` and
+   * Exchanges an unexpired `refreshToken` for a new one, also updates `token` and
    * `tokenExpires`.
    */
   private refreshRefreshToken(requestOptions?: ITokenRequestOptions) {
